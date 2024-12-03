@@ -1,12 +1,15 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
-public class pathfinding : MonoBehaviour
-{
+public class Pathfinding : MonoBehaviour
+{   
+    #if UNITY_EDITOR
     public Transform target;             // The target transform to reach
-    public LayerMask obstacleLayer;      // Layer to detect obstacles
+    public GameObject shipp;
+    #endif
     public float maxDistance = 10f;      // Maximum distance to search for a path
-    public GameObject ship;
+    public float bufferMultiplier = 1;
     GameObject obstructionObject;
     private Vector3 boxCenter;
     private Vector3 boxSize;
@@ -14,36 +17,37 @@ public class pathfinding : MonoBehaviour
     private Vector3? obstructionPoint;   // Position where the box cast hits an obstacle
     GameObject lastHitObject;
     public List<Vector3> waypoints = new List<Vector3>();
+    public List<Vector3> waypointList = new List<Vector3>();
     public List<GameObject> visited = new List<GameObject>();
     Vector3 lastDirection;
-    void Start()
-    {   visited.Clear();
-        CalculateBoundingBox(ship);
-        FindPath(transform.position, target.position);
+    Vector3 lastHitPoint;
+
+    Vector3 startPoint;
+    public List<Vector3> FindPath(Vector3 start, Vector3 end , GameObject ship)
+    {   
+        CalculateBoundingBox(end, ship);
+        waypointList.Clear();
+        waypoints.Clear();
+        visited.Clear();
+        obstructionPoint = null; // Reset the obstruction point
+
+        // Check if the path is clear directly to the target
+        if (IsPathClear(start, end, boxCenter, boxSize * bufferMultiplier, ship))
+        {
+            waypoints.Add(end);
+            Debug.Log("Way Free");
+            return waypoints; // Return early if the path is clear
+        }
+
+        lastHitObject = obstructionObject;
+        Debug.Log("Obstruction detected, searching for alternative path...");
+        CheckAllDirections(start, end, ship);
+        
+        return waypointList; // Return the waypoint list after finding the path
     }
 
-Vector3 startPoint;
-void FindPath(Vector3 start, Vector3 end)
-{
-    waypoints.Clear();
-    visited.Clear();
-    obstructionPoint = null; // Reset the obstruction point
-    // Check if the path is clear directly to the target
-    if (IsPathClear(start, end, boxCenter, boxSize, obstacleLayer)) 
-    {
-        waypoints.Add(target.position);
-        Debug.Log("Way Free");
-        return; // Exit early if the path is clear
-    }
-    lastHitObject = obstructionObject;
-    
-    Debug.Log("Obstruction detected, searching for alternative path...");
 
-    CheckAllDirections(start, end);
-}
-
-
-void CheckAllDirections(Vector3 start, Vector3 end, int depth = 0)
+void CheckAllDirections(Vector3 start, Vector3 end, GameObject ship, int depth = 0)
 {   
     // Set a maximum recursion depth to prevent infinite loops
     int maxDepth = 50;
@@ -52,50 +56,63 @@ void CheckAllDirections(Vector3 start, Vector3 end, int depth = 0)
         Debug.Log("Max recursion depth reached, exiting to avoid infinite loop.");
         return;
     }
-
+    
     startPoint = start;
     float stepSize = boxSize.x;
-    Vector3[] directions = { Vector3.up, Vector3.down, Vector3.left, Vector3.right };
+    Vector3[] directions = { ship.transform.up, -ship.transform.up, ship.transform.right, -ship.transform.right, ship.transform.forward};
     float[] searchDistances = new float[directions.Length];
     
+    
     // Limit for forward movement to prevent infinite loop
-    float maxForwardDistance = 100.0f;
     float forwardDistance = 0;
-
+    Vector3 forwardDir = (end - startPoint).normalized;
     // Move forward as long as the path is clear and within the max forward limit
-    while (IsStepClear(startPoint + Vector3.forward * stepSize, boxSize * 2, obstacleLayer) && forwardDistance < maxForwardDistance)
+    while (IsStepClear(startPoint + forwardDir * stepSize, boxSize * bufferMultiplier, ship) && forwardDistance < maxDistance)
     {
-        startPoint += Vector3.forward * stepSize;
+        startPoint += forwardDir * stepSize;
 
-        #warning minimize waypoints... remove and fix
         waypoints.Add(startPoint); 
-
+        if (IsPathClear(startPoint, end, boxCenter, boxSize * bufferMultiplier, ship))
+        {
+            if(waypoints.Count == 1)waypoints.RemoveAt(0);
+            waypointList.Add(startPoint);
+            waypointList.Add(end);
+            waypoints.Add(startPoint);
+            waypoints.Add(end);
+            return;
+        }
         forwardDistance += stepSize;
         Debug.Log("Moving forward, new start point: " + startPoint);
+
     }
 
-    // Check directions from the updated startPoint
+    #warning later modify to go back because this is not the solution
+    startPoint -= forwardDir * stepSize; 
+
+
     while (true)
     {
         bool anyDirectionValid = false;
-
         for (int i = 0; i < directions.Length; i++)
         {   
             Vector3 direction = directions[i];
             Vector3 newStart = startPoint + direction * searchDistances[i];
-
+            
             // Ensure the step is within bounds and clear
-            if (searchDistances[i] <= maxDistance && IsStepClear(newStart, boxSize, obstacleLayer))
+            if (searchDistances[i] <= maxDistance && IsStepClear(newStart, boxSize * bufferMultiplier, ship))
             {
                 // If path to end is clear, finalize path
-                if (IsPathClear(newStart, end, boxCenter, boxSize, obstacleLayer))
+                if (IsPathClear(newStart, end, boxCenter, boxSize * bufferMultiplier, ship))
                 {
                     if(waypoints.Count == 1)waypoints.RemoveAt(0);
+                    waypointList.Add(newStart);
+                    waypointList.Add(end);
                     waypoints.Add(newStart);
                     waypoints.Add(end);
                     Debug.Log($"Path found towards {direction}: {newStart}");
                     return;
                 }
+                
 
                 // Handle obstacles and recursion with depth control
                 else if (lastHitObject != obstructionObject && !visited.Contains(obstructionObject))
@@ -103,7 +120,7 @@ void CheckAllDirections(Vector3 start, Vector3 end, int depth = 0)
                     Debug.Log("New Object Hit " + obstructionObject.name);
                     visited.Add(lastHitObject);
                     lastHitObject = obstructionObject;
-
+                    waypointList.Add(newStart);
                     if (IsOppositeDirection(direction, lastDirection))
                     {
                         if (waypoints.Count != 0)
@@ -113,8 +130,9 @@ void CheckAllDirections(Vector3 start, Vector3 end, int depth = 0)
                     }
 
                     waypoints.Add(newStart);
+                    
                     lastDirection = direction;
-                    CheckAllDirections(newStart, end, depth + 1);  // Recursive call with depth tracking
+                    CheckAllDirections(newStart, end, ship, depth + 1);  // Recursive call with depth tracking
                     return;
                 }
 
@@ -137,12 +155,71 @@ void CheckAllDirections(Vector3 start, Vector3 end, int depth = 0)
 }
 
 
-// Check if a specific step location is clear of obstacles
-bool IsStepClear(Vector3 position, Vector3 boxSize, LayerMask obstacleLayer)
+bool IsStepClear(Vector3 position, Vector3 boxSize, GameObject parent)
 {
-    // Perform an overlap box to check if the step position is within an obstacle
-    Collider[] hitColliders = Physics.OverlapBox(position, boxSize / 2, Quaternion.identity, obstacleLayer);
-    return hitColliders.Length == 0;
+    Collider[] hitColliders = Physics.OverlapBox(position, boxSize / 2, Quaternion.identity);
+
+    foreach (Collider collider in hitColliders)
+    {
+        if (IsChildOf(collider.gameObject, parent))
+        {
+            continue; // Ignore the parent or its child objects
+        }
+        return false; // Found an obstruction
+    }
+    return true; // No obstructions
+}
+
+
+
+
+
+bool IsPathClear(Vector3 start, Vector3 end, Vector3 boxCenter, Vector3 boxSize, GameObject parent)
+{
+    Vector3 direction = (end - start).normalized;
+    float distance = Vector3.Distance(start, end);
+    float boxSizeMagnitude = boxSize.magnitude;
+
+    RaycastHit[] hits = Physics.BoxCastAll(start + boxCenter, boxSize / 2, direction, Quaternion.identity, distance);
+
+    foreach (RaycastHit hit in hits)
+    {
+        GameObject obstructionObject = hit.collider.gameObject;
+
+        lastHitPoint = hit.point;
+        if (IsChildOf(obstructionObject, parent))
+        {
+            continue; // Ignore this hit and keep checking others
+        }
+        else
+        {
+            return false;
+        }
+        // Check if the hit point is within the obstructing threshold
+        if (Vector3.Distance(start, hit.point) < distance - boxSizeMagnitude)
+        {
+            return false; // Obstruction found, path not clear
+        }
+    }
+
+    return true; // No valid obstruction found, path is clear
+}
+
+
+// Helper function to check if a GameObject is a child of the specified parent
+bool IsChildOf(GameObject obj, GameObject parent)
+{
+    Transform current = obj.transform.root;
+    Transform current2 = parent.transform.root;
+    while (current != null)
+    {
+        if (current == current2)
+        {
+            return true; // Object is the parent or a child of the parent
+        }
+        current = current.parent;
+    }
+    return false;
 }
 
 // Method to check if two directions are opposite
@@ -156,40 +233,15 @@ private bool IsOppositeDirection(Vector3 lastDirection, Vector3 currentDirection
 
 
 
-bool IsPathClear(Vector3 start, Vector3 end, Vector3 boxCenter, Vector3 boxSize, LayerMask obstacleLayer)
-{
-    Vector3 direction = (end - start).normalized;
-    float distance = Vector3.Distance(start, end);
-
-    // Perform the box cast and capture hit info
-    if (Physics.BoxCast(start + boxCenter, boxSize / 2, direction, out RaycastHit hitInfo, Quaternion.identity, distance, obstacleLayer))
-    {
-        obstructionObject = hitInfo.collider.gameObject;
-        
-        if (Vector3.Distance(start, hitInfo.point) <= distance)
-        {
-            return false; // Obstruction found, path not clear
-        }
-    }
-
-    return true; // Path is clear
-}
 
 
 
 
 
-
-
-
-
-
-
-
-    private void CalculateBoundingBox(GameObject ship)
+    private void CalculateBoundingBox(Vector3 end ,GameObject ship)
     {
         if (ship == null) return;
-
+        // Get all colliders in the prefab's children
         objectColliders = ship.GetComponentsInChildren<MeshRenderer>();
 
         if (objectColliders.Length == 0)
@@ -198,38 +250,101 @@ bool IsPathClear(Vector3 start, Vector3 end, Vector3 boxCenter, Vector3 boxSize,
             return;
         }
 
+        // Initialize bounds based on the first collider
         Bounds bounds = objectColliders[0].bounds;
 
+        // Expand bounds to include all other colliders
         foreach (MeshRenderer col in objectColliders)
         {
             bounds.Encapsulate(col.bounds);
         }
 
+        // Calculate center and size for the bounding box
         boxCenter = bounds.center - ship.transform.position;
         boxSize = bounds.size;
     }
 
+    
 
+
+#if UNITY_EDITOR
+void OnDrawGizmosSelected() 
+{
+    waypoints.Clear();
+    visited.Clear();
+    CalculateBoundingBox(target.position, shipp);
+    FindPath(shipp.transform.position, target.position, shipp);
+}
 
 private void OnDrawGizmos()
 {   
-    waypoints.Clear();
-    visited.Clear();
-    CalculateBoundingBox(ship);
-    FindPath(transform.position, target.position);
-    // Draw rays from each waypoint to the target
-    Gizmos.color = Color.green; // Color for the rays
+    Gizmos.color = Color.green; // Color for the boxes
+
+        // Draw 3D boxes between waypoints
         for (int i = 0; i < waypoints.Count - 1; i++)
         {
-            Debug.DrawLine(waypoints[i], waypoints[i + 1], Color.green);
-        }Debug.DrawLine(transform.position, waypoints[0]); // Draw a line from waypoint to target
-    foreach (var waypoint in waypoints)
-    {
-        Gizmos.DrawSphere(waypoint, 0.2f);
+            DrawBoxBetweenPoints(waypoints[i], waypoints[i + 1]);
+        }
+
+        // Draw a line from the transform position to the first waypoint
+        if (waypoints.Count > 0)
+        {
+            DrawBoxBetweenPoints(transform.position, waypoints[0]);
+        }
+
+        // Draw spheres at each waypoint for visualization
+        foreach (var waypoint in waypoints)
+        {
+            Gizmos.DrawSphere(waypoint, 0.2f);
+        }
+        foreach (var waypoint in waypointList)
+        {
+            Gizmos.DrawSphere(waypoint, 1);
+        }
+        for (int i = 0; i < waypointList.Count - 1; i++)
+        {
+            DrawBoxBetweenPointss(waypointList[i], waypointList[i + 1]);
+        }
+
+        // Draw a line from the transform position to the first waypoint
+        if (waypointList.Count > 0)
+        {
+            DrawBoxBetweenPointss(transform.position, waypointList[0]);
+        }
     }
 
+    private void DrawBoxBetweenPoints(Vector3 start, Vector3 end)
+    {
+        Gizmos.color = Color.green; // Color for the boxes
 
+        Vector3 center = (start + end) / 2; // Center of the box
+        float distance = Vector3.Distance(start, end); // Length of the segment
 
+        // Calculate the rotation to align the box with the segment
+        Quaternion rotation = Quaternion.LookRotation(end - start);
+
+        // Draw the wire cube at the calculated position with rotation
+        Gizmos.matrix = Matrix4x4.TRS(center, rotation, Vector3.one); // Set the Gizmos matrix for rotation and position
+        Gizmos.DrawWireCube(Vector3.zero, new Vector3(boxSize.x, boxSize.y, distance)); // Draw at the origin
+        Gizmos.matrix = Matrix4x4.identity; // Reset the Gizmos matrix
+    }
+    private void DrawBoxBetweenPointss(Vector3 start, Vector3 end)
+    {
+        Gizmos.color = Color.blue; // Color for the boxes
+
+        Vector3 center = (start + end) / 2; // Center of the box
+        float distance = Vector3.Distance(start, end); // Length of the segment
+
+        // Calculate the rotation to align the box with the segment
+        Quaternion rotation = Quaternion.LookRotation(end - start);
+
+        // Draw the wire cube at the calculated position with rotation
+        Gizmos.matrix = Matrix4x4.TRS(center, rotation, Vector3.one); // Set the Gizmos matrix for rotation and position
+        Gizmos.DrawWireCube(Vector3.zero, new Vector3(boxSize.x + bufferMultiplier, boxSize.y + bufferMultiplier, distance)); // Draw at the origin
+        Gizmos.matrix = Matrix4x4.identity; // Reset the Gizmos matrix
+    }
+#endif
+}
 
     /*Gizmos.color = Color.cyan; // Color for the path boxes
     for (int i = 0; i < waypoints.Count - 1; i++)
@@ -264,8 +379,5 @@ private void OnDrawGizmos()
         Gizmos.DrawWireCube(drawPosition, boxSize); // Draw the cube at the calculated position along the ray
     }
     */
-}
-
-}
 // add boxed path
 // use jobs
