@@ -8,8 +8,8 @@ public class Pathfinding : MonoBehaviour
     public Transform target;             // The target transform to reach
     public GameObject shipp;
     #endif
-    public float maxDistance = 10f;      // Maximum distance to search for a path
-    public float bufferMultiplier = 1;
+    public float maxDistance = 1000f;      // Maximum distance to search for a path
+    public float bufferMultiplier = 0.3;
     GameObject obstructionObject;
     private Vector3 boxCenter;
     private Vector3 boxSize;
